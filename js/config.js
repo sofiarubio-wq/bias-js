@@ -46,6 +46,7 @@
       consent: [],
       misuse: ["D5_refusal"],
       transparency: ["D6_disclosure"],
+      revisionist_history: ["D1_equal_treatment", "D5_refusal"],
     },
 
     JUDGE_KAPPA_THRESHOLD: 0.75,
