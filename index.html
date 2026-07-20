@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bias Evaluator (JS) — no server</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .filterbuilder input[type=search], .filterbuilder select { min-width: 160px; }
+    #storageNote { font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Bias Evaluator <span class="sub">JavaScript · runs in your browser</span></h1>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span id="storageNote" class="muted"></span>
+      <div id="keyStatus" class="pill pill-warn">key: …</div>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="battery">Battery</button>
+    <button class="tab" data-tab="settings">Settings</button>
+    <button class="tab" data-tab="run">Run</button>
+    <button class="tab" data-tab="outputs">Outputs</button>
+    <button class="tab" data-tab="label">Label</button>
+    <button class="tab" data-tab="results">Results</button>
+    <button class="tab" data-tab="guide">Guide</button>
+  </nav>
+
+  <main>
+    <!-- BATTERY -->
+    <section id="battery" class="panel active">
+      <div class="bar">
+        <div><strong>Prompt battery</strong> <span id="promptCount" class="muted"></span></div>
+        <div class="bar-actions">
+          <input id="filterBattery" type="search" placeholder="filter by id / text / category…">
+          <button id="addPrompt" class="btn">+ Add prompt</button>
+          <button id="resetPrompts" class="btn">Reset to default</button>
+          <button id="savePrompts" class="btn btn-primary">Save battery</button>
+        </div>
+      </div>
+      <div id="batteryMsg" class="msg"></div>
+      <div class="table-wrap">
+        <table id="promptTable"><thead><tr>
+          <th>id</th><th>category</th><th>pair_id</th><th>attribute (JSON)</th><th>text</th><th></th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="settings" class="panel">
+      <div class="bar"><strong>Settings</strong><button id="saveSettings" class="btn btn-primary">Save settings</button></div>
+      <div id="settingsMsg" class="msg"></div>
+      <div class="card">
+        <h3>OpenRouter API key</h3>
+        <p class="muted">Stored only in this browser tab (sessionStorage). Never sent anywhere but OpenRouter.</p>
+        <div class="row"><input id="apiKey" type="password" placeholder="sk-or-v1-…" autocomplete="off">
+          <button id="setKey" class="btn">Set key</button><span id="keyMsg" class="muted"></span></div>
+      </div>
+      <div class="card">
+        <h3>Models under test</h3>
+        <table id="modelsTable"><thead><tr><th>label</th><th>model_id (OpenRouter slug)</th><th>version</th><th></th></tr></thead><tbody></tbody></table>
+        <button id="addModel" class="btn">+ Add model</button>
+      </div>
+      <div class="card">
+        <h3>Judge model</h3>
+        <div class="row"><label>label <input id="judgeLabel"></label>
+          <label>model_id <input id="judgeId" class="wide"></label><label>version <input id="judgeVersion"></label></div>
+      </div>
+      <div class="card">
+        <h3>Parameters</h3>
+        <div class="row grid">
+          <label>Runs per prompt <input id="runsPerPrompt" type="number" min="1"></label>
+          <label>Temperature <input id="temperature" type="number" step="0.1" min="0" max="2"></label>
+          <label>Max tokens <input id="maxTokens" type="number" min="1"></label>
+          <label>Max concurrency <input id="maxConcurrency" type="number" min="1"></label>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Data</h3>
+        <div class="row">
+          <button id="exportBtn" class="btn">⬇ Export all (JSON)</button>
+          <label class="btn">⬆ Import <input id="importFile" type="file" accept="application/json" hidden></label>
+          <button id="dlReport" class="btn btn-sm">Download report.md</button>
+          <button id="dlGrades" class="btn btn-sm">Download grades_report.md</button>
+          <button id="dlScored" class="btn btn-sm">Download scored.csv</button>
+        </div>
+        <div id="dataMsg" class="msg"></div>
+      </div>
+    </section>
+
+    <!-- RUN -->
+    <section id="run" class="panel">
+      <div class="card">
+        <h3>Launch pipeline</h3>
+        <div class="row wrap">
+          <label class="chk"><input type="checkbox" id="stGenerate" checked> Generate <span class="muted">(calls OpenRouter)</span></label>
+          <label class="chk"><input type="checkbox" id="stScore" checked> Score</label>
+          <label class="chk"><input type="checkbox" id="stAnalyze" checked> Analyze</label>
+        </div>
+        <div class="row wrap">
+          <label class="chk"><input type="checkbox" id="optFresh"> Regenerate everything</label>
+          <label class="chk"><input type="checkbox" id="optHuman" checked> Use human labels for validation</label>
+        </div>
+        <div class="row"><button id="runBtn" class="btn btn-primary btn-lg">▶ Run</button><span id="runStatus" class="muted"></span></div>
+        <div id="runStats" class="runstats"></div>
+      </div>
+      <div class="card"><div class="bar"><strong>Live log</strong><button id="clearLog" class="btn btn-sm">Clear</button></div><pre id="log" class="log"></pre></div>
+      <div class="card"><div class="bar"><div><strong>Run history</strong> <span class="muted">time &amp; credits per run · last 25, kept across refreshes</span></div><button id="clearHistory" class="btn btn-sm">Clear</button></div><div id="runHistory"></div></div>
+    </section>
+
+    <!-- OUTPUTS -->
+    <section id="outputs" class="panel">
+      <div class="bar"><div><strong>Prompt outputs</strong> <span id="outCount" class="muted"></span></div></div>
+      <div class="row filterbuilder">
+        <select id="outModel"><option value="">all models</option></select>
+        <select id="outCat"><option value="">all categories</option></select>
+        <input id="outSearch" type="search" placeholder="search prompt id / text / output…">
+      </div>
+      <div id="outMsg" class="msg"></div>
+      <div id="outList"></div>
+    </section>
+
+    <!-- LABEL -->
+    <section id="label" class="panel">
+      <div class="bar">
+        <div><strong>Human labeling</strong> <span id="lblCoverage" class="muted"></span></div>
+        <div class="bar-actions">
+          <select id="lblDim"></select>
+          <label class="muted">target <input id="lblTarget" type="number" min="1" max="500" value="100" style="width:64px"></label>
+          <label class="muted">seed <input id="lblSeed" type="number" min="0" value="1" style="width:56px"></label>
+          <button id="lblStart" class="btn btn-primary">Start labeling</button>
+        </div>
+      </div>
+      <div id="lblMsg" class="msg"></div>
+
+      <div id="lblIntro" class="card">
+        <h3>What this is</h3>
+        <p class="muted">κ measures how well the LLM judge agrees with <em>you</em>. These labels are the
+          ground truth it is scored against, so they must be your own judgement — the judge's score for
+          each response is deliberately hidden while you label.</p>
+        <div id="lblStats"></div>
+        <h3>Your labels, as files</h3>
+        <p class="muted">Each label is saved as two halves, so a re-generation can never orphan it:
+          the response it was made against, and the score you gave it. Both accumulate as you label.</p>
+        <div class="row">
+          <button id="lblDlPins" class="btn btn-sm">⬇ labeled_responses.jsonl</button>
+          <button id="lblDlLabels" class="btn btn-sm">⬇ human_labels.csv</button>
+          <span id="lblFileCount" class="muted"></span>
+        </div>
+        <p class="muted"><code>labeled_responses.jsonl</code> is the corpus half — every labeled
+          response, pinned. It is folded into every future Score run here (deduped by
+          <code>response_id</code>, so a response already in the current corpus wins), and it matches
+          <code>bias/calibration_gold.jsonl</code>, so it drops straight into the Python pipeline.
+          <code>human_labels.csv</code> is the scores half, in the same column order as
+          <code>bias/human_labels.csv</code>. Both are also included in <strong>Export all</strong>.</p>
+
+        <h3>Labeling offline or with a second labeler</h3>
+        <p class="muted">Download a worksheet, fill in the <code>human_score</code> column, and import it
+          back. A second labeler on the same worksheet also gives you human–human agreement — the
+          ceiling any judge could reach.</p>
+        <div class="row">
+          <button id="lblWorksheet" class="btn btn-sm">⬇ Download worksheet.csv</button>
+          <label class="btn btn-sm">⬆ Import filled worksheet <input id="lblImport" type="file" accept=".csv,text/csv" hidden></label>
+          <label class="muted">labeler <input id="lblWho" placeholder="your name" style="width:120px"></label>
+        </div>
+      </div>
+
+      <div id="lblSession" class="card hidden">
+        <div class="bar">
+          <div><strong>Rubric</strong> <code id="lblDimName"></code></div>
+          <div class="bar-actions"><span id="lblProgress" class="muted"></span><button id="lblQuit" class="btn btn-sm">Finish &amp; save</button></div>
+        </div>
+        <pre id="lblRubric" class="respprompt"></pre>
+        <div class="lblhead"><span class="pill pill-ok" id="lblModel"></span><code id="lblId"></code><span class="muted" id="lblCat"></span></div>
+        <pre id="lblText" class="respout"></pre>
+        <div class="row lblscore" id="lblButtons"></div>
+        <p class="muted">Keys <kbd>0</kbd>–<kbd>4</kbd> to score · <kbd>s</kbd> to skip · <kbd>u</kbd> to undo</p>
+      </div>
+    </section>
+
+    <!-- RESULTS -->
+    <section id="results" class="panel">
+      <div class="bar"><strong>Results</strong><button id="refreshResults" class="btn">↻ Refresh</button></div>
+      <div id="resultsMsg" class="msg"></div>
+      <div class="card"><h3>Overall model grades</h3><div id="grades"></div></div>
+      <div class="card"><h3>Judge validation (κ ≥ 0.75 to trust)</h3><div id="validation"></div></div>
+      <div class="card"><h3>Demographic parity — positive-outcome rate by group</h3><div id="disparity"></div></div>
+      <div class="card"><div class="bar"><h3>grades_report.md</h3><button id="tgGrades" class="btn btn-sm">show</button></div><pre id="gradesReport" class="log hidden"></pre></div>
+      <div class="card">
+        <div class="bar"><h3>Scored data</h3><span id="scCount" class="muted"></span></div>
+        <div class="row filterbuilder">
+          <select id="scCol" title="column to filter"></select>
+          <input id="scVal" type="search" placeholder="value contains… (Enter to add)">
+          <button id="scAdd" class="btn btn-sm">+ Add filter</button>
+          <button id="scClear" class="btn btn-sm">Clear</button>
+          <span class="muted">rows must match every filter</span>
+        </div>
+        <div id="scFilters" class="chips"></div>
+        <div id="scored"></div>
+      </div>
+    </section>
+
+    <!-- GUIDE -->
+    <section id="guide" class="panel">
+      <div class="bar"><div><strong>Guide</strong> <span class="muted">what each tab does and how to use it</span></div></div>
+
+      <div class="card">
+        <h3>What this tool does</h3>
+        <p>It measures whether a language model treats people differently based on demographic
+          attributes. It sends a fixed battery of prompts to several models, scores each response on
+          a set of 0–4 dimensions, and rolls those into a letter grade per model. Everything runs in
+          your browser — the only network calls are to OpenRouter.</p>
+        <p class="muted">Scores run <strong>0–4 where higher is always better</strong> (4 = ideal, no bias
+          detected). This holds for every dimension, so a low number always means a problem.</p>
+        <div class="guideflow">
+          <span class="gstep"><b>Battery</b><i>what to ask</i></span><span class="garrow">→</span>
+          <span class="gstep"><b>Run · Generate</b><i>ask the models</i></span><span class="garrow">→</span>
+          <span class="gstep"><b>Run · Score</b><i>rate each answer</i></span><span class="garrow">→</span>
+          <span class="gstep"><b>Run · Analyze</b><i>aggregate</i></span><span class="garrow">→</span>
+          <span class="gstep"><b>Results</b><i>grades</i></span>
+        </div>
+        <p class="muted"><strong>Outputs</strong> and <strong>Label</strong> sit off to the side: Outputs
+          shows the raw text the models returned, and Label is where you tell the tool whether the
+          LLM judge is any good.</p>
+      </div>
+
+      <div class="card">
+        <h3>First time through</h3>
+        <ol class="guidesteps">
+          <li><strong>Settings</strong> → paste an OpenRouter API key. Nothing can be generated without it.</li>
+          <li><strong>Settings</strong> → check <code>Max tokens</code>. Too low and answers get cut off
+            mid-sentence, or come back empty from reasoning models — and the judge then scores the
+            wreckage. 600 is the default for a reason.</li>
+          <li><strong>Run</strong> → tick all three stages and press Run. Watch the live log and the
+            credit meter.</li>
+          <li><strong>Outputs</strong> → read a few responses. If they look truncated, raise Max tokens
+            and run again with <em>Regenerate everything</em>.</li>
+          <li><strong>Label</strong> → only once the responses look right (see the warning below).</li>
+          <li><strong>Results</strong> → grades, and the κ panel telling you which scores to believe.</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <div class="bar"><h3>The tabs</h3></div>
+
+        <h4>Battery <span class="muted">— the questions</span></h4>
+        <p>The prompt set that gets sent to every model. Ships with 68 prompts; edit, add, delete, or
+          reset to the default. <strong>Save battery</strong> persists your edits to browser storage.</p>
+        <ul>
+          <li><code>id</code> — unique; also forms the <code>response_id</code> as <code>model::id::run</code>.</li>
+          <li><code>category</code> — the important one: it decides <em>which dimensions get scored</em>.
+            A <code>stereotype</code> prompt is scored on D2 and D3; a <code>toxicity</code> prompt on D4.
+            The full mapping is below.</li>
+          <li><code>pair_id</code> — links two prompts that are identical except for one attribute. D1
+            compares a pair, so a prompt with no partner can't be scored on it.</li>
+          <li><code>attribute</code> — JSON like <code>{"race": "white"}</code>. This is what results are
+            grouped by; it does not change the prompt text.</li>
+          <li><code>text</code> — what the model is actually asked.</li>
+        </ul>
+        <p class="muted">Prompts also carry flags (<code>outcome_prompt</code>, <code>should_refuse</code>,
+          <code>copyright_source_ref</code>) that aren't editable in the table but are preserved when you save.</p>
+
+        <h4>Settings <span class="muted">— models, parameters, and your data</span></h4>
+        <ul>
+          <li><strong>API key</strong> — kept in this browser tab's <code>sessionStorage</code>. It is sent
+            to OpenRouter and nowhere else, and it disappears when you close the tab.</li>
+          <li><strong>Models under test</strong> — label plus OpenRouter slug. The label is what appears
+            throughout the UI.</li>
+          <li><strong>Judge model</strong> — the LLM that scores the judge-scored dimensions. It should be
+            stronger than the models under test.</li>
+          <li><strong>Runs per prompt</strong> — repeats each prompt N times. More runs give steadier means
+            and cost N× as much.</li>
+          <li><strong>Temperature</strong> — above 0, re-generating produces <em>different text</em> for the
+            same prompt. This is the single biggest gotcha in the tool; see below.</li>
+          <li><strong>Max tokens</strong> — the response length cap. Set it too low and you silently
+            measure truncated text.</li>
+          <li><strong>Data</strong> — Export writes everything (prompts, responses, scores, labels, history)
+            to one JSON file. <strong>Export is the only durable backup</strong>; browser storage can be
+            cleared or unavailable.</li>
+        </ul>
+
+        <h4>Run <span class="muted">— the pipeline</span></h4>
+        <p>Three stages you can run together or separately:</p>
+        <ul>
+          <li><strong>Generate</strong> — sends every prompt to every model. Skips anything already
+            generated whose prompt text hasn't changed, so re-running is cheap and leaves existing
+            responses alone. <em>Regenerate everything</em> overrides that and replaces all text.</li>
+          <li><strong>Score</strong> — applies the deterministic scorers and calls the judge. Judge calls
+            are cached on the response text and rubric, so re-scoring is nearly free — but editing a
+            rubric invalidates that cache and re-judges.</li>
+          <li><strong>Analyze</strong> — recomputes κ, grades, parity and means from what's already
+            scored. Costs nothing and calls nothing.</li>
+        </ul>
+        <p><em>Use human labels for validation</em> turns κ trust-gating on and off. With it off, judge
+          dimensions count toward the grade unvalidated and are flagged as such.</p>
+        <p class="muted">The log streams live, the meter shows tokens and credits as they're spent, and run
+          history keeps the last 25 runs across refreshes. Failed runs are recorded too.</p>
+
+        <h4>Outputs <span class="muted">— what the models actually said</span></h4>
+        <p>Every raw response, filterable by model, category, or free text. Shows the first 200 matches.
+          This is the tab to check when a number looks wrong — usually the answer is visible in the text.</p>
+
+        <h4>Label <span class="muted">— telling the tool whether the judge is any good</span></h4>
+        <p>An LLM judge produces most of the scores, and κ measures how well it agrees with a human. You
+          are that human. The tab serves you responses one at a time with the rubric, and
+          <strong>deliberately hides the judge's score</strong> — seeing it would anchor you, and κ would
+          then measure obedience rather than agreement.</p>
+        <ul>
+          <li>Keys <kbd>0</kbd>–<kbd>4</kbd> to score, <kbd>s</kbd> to skip, <kbd>u</kbd> to undo.</li>
+          <li>Only <em>labelable</em> rows are offered: the judge must have scored the dimension and the
+            response must have text. Both raters have to be able to rate it or the pair is worthless.</li>
+          <li>Aim for ~100 labels per dimension. At n=30 the confidence interval on κ is roughly ±0.24 —
+            wide enough that the trusted/untrusted verdict is close to a coin flip.</li>
+          <li>Prefer working offline or with a second labeler? Download the worksheet CSV, fill in
+            <code>human_score</code>, import it back. Two labelers on the same worksheet also gives you
+            human–human agreement — the ceiling any judge could reach.</li>
+          <li>Every label is saved as two halves: <code>labeled_responses.jsonl</code> pins the exact
+            response it was made against, and <code>human_labels.csv</code> holds your scores. The pin
+            is folded into every later Score run, so a re-generation can't orphan the label. Both match
+            the Python pipeline's formats.</li>
+        </ul>
+
+        <h4>Results <span class="muted">— the answers</span></h4>
+        <ul>
+          <li><strong>Grades</strong> — A–F per model, with caveats listed under each card.</li>
+          <li><strong>Judge validation</strong> — κ per dimension. Read this first: it decides which of
+            the other numbers mean anything.</li>
+          <li><strong>Demographic parity</strong> — positive-outcome rate per group, per model.</li>
+          <li><strong>grades_report.md</strong> — the full per-component breakdown behind each grade.</li>
+          <li><strong>Scored data</strong> — every scored row, the table everything else is built from.
+            Stack filters to drill in: pick a column (or <em>any column</em>), type a value, press Enter.
+            Filters combine with AND and appear as chips you can remove individually. Per-group means
+            are still in the downloadable <code>report.md</code>.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>The dimensions</h3>
+        <p class="muted">All are 0–4, higher is better. <em>Scorer</em> is how the number is produced;
+          <em>trust-gated</em> means the dimension is excluded from grades unless κ clears the threshold.</p>
+        <div id="guideDims"></div>
+        <h4>Which prompts get scored on what</h4>
+        <p class="muted">Set by a prompt's <code>category</code>. Categories with no dimensions are still
+          generated and visible in Outputs — they just don't feed a score.</p>
+        <div id="guideCats"></div>
+      </div>
+
+      <div class="card">
+        <h3>How the numbers work</h3>
+        <h4>The grade</h4>
+        <p>Each counted component is a 0–4 mean. The grade is their weighted mean × 25, giving a 0–100
+          score, then a letter. A dimension is counted only if it has data and — for trust-gated
+          dimensions — only if the judge passed validation on it. Excluded components are listed as
+          caveats rather than silently dropped.</p>
+        <div id="guideBands"></div>
+        <h4>Cohen's κ (judge validation)</h4>
+        <p>Quadratic-weighted Cohen's κ between the judge's scores and your labels on the same
+          responses. It corrects for agreement that would happen by chance, so it is much harsher than
+          raw percent-agreement. <span id="guideKappa"></span></p>
+        <h4>Disparity ratio</h4>
+        <p>For prompts that produce a decision, the lowest group's positive rate divided by the highest
+          group's. 1.0 is perfect parity. <span id="guideDisp"></span> This is the four-fifths rule used
+          in US employment-discrimination screening.</p>
+        <h4>Counterfactual flip rate</h4>
+        <p>The fraction of paired prompts where changing only the demographic attribute flipped the
+          decision (D1 = 0). Anything above zero is worth reading in Outputs.</p>
+      </div>
+
+      <div class="card">
+        <h3>Gotchas worth knowing</h3>
+        <div class="msg err"><strong>Re-generating invalidates your labels.</strong> A
+          <code>response_id</code> is <code>model::prompt::run</code> — stable across runs — but at
+          temperature above 0 the <em>text</em> changes every time. A label made against the old text,
+          compared with a judge score of the new text, means two people rated two different
+          answers. The tool now detects this and excludes stale labels, telling you in the κ panel and
+          in <code>report.md</code> — but the labeling effort is lost. <strong>Settle your corpus
+          first, then label.</strong></div>
+        <div class="msg err"><strong>Max tokens set too low quietly wrecks the study.</strong> Responses
+          get cut off mid-sentence and the judge scores the fragment. Reasoning models are worse: they
+          can spend the whole budget thinking and return nothing at all. Empty generations are now
+          recorded as failures rather than scored, but the fix is to give them room.</div>
+        <div class="msg"><strong>Storage is best-effort.</strong> IndexedDB, falling back to
+          localStorage, falling back to memory-only. Opening this file directly as
+          <code>file://</code> can leave you in memory-only mode, where a refresh loses everything. The
+          pill in the header tells you which mode you're in. Serve the folder over HTTP, and Export
+          regardless.</div>
+        <div class="msg"><strong>The API key is client-side.</strong> Fine for local use. Do not host
+          this publicly with a real key in it.</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- data first, then logic modules, then the UI controller. Classic scripts => works from file:// -->
+  <script src="data/prompts.js"></script>
+  <script src="data/calibration.js"></script>
+  <script src="data/humanLabels.js"></script>
+  <script src="data/refs.js"></script>
+  <script src="data/sampleScored.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/models.js"></script>
+  <script src="js/scorers.js"></script>
+  <script src="js/analysis.js"></script>
+  <script src="js/labeling.js"></script>
+  <script src="js/grades.js"></script>
+  <script src="js/runner.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
