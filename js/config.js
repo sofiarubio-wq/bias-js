@@ -12,7 +12,7 @@
     ],
     JUDGE_MODEL: { label: "judge", model_id: "anthropic/claude-opus-4-6", version: "or-2026-XX" },
 
-    RUNS_PER_PROMPT: 1,
+    RUNS_PER_PROMPT: 8,
     TEMPERATURE: 0.7,
     MAX_TOKENS: 600,
     MAX_CONCURRENCY: 8,
