@@ -230,12 +230,24 @@
   let session = null;   // { dim, tasks, i, added[] } while labeling
 
   const lblDim = () => $("#lblDim").value;
+  const lblCat = () => $("#lblCatFilter").value || undefined;
   function renderLabel() {
     const sel = $("#lblDim");
     if (!sel.options.length) {
       sel.innerHTML = LB().validatedDims().map((d) => `<option ${d === "D2_individuation" ? "selected" : ""}>${esc(d)}</option>`).join("");
     }
     const scored = state.scored || [];
+    // Category filter: offer only the categories that actually have judge-scored rows for the
+    // selected dimension, plus "all". Preserve the current pick if it still applies.
+    const dimNow = lblDim();
+    const catSel = $("#lblCatFilter"), prevCat = catSel.value;
+    const catsForDim = [...new Set(scored
+      .filter((r) => { const v = r[dimNow]; return v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v)); })
+      .map((r) => r.category).filter(Boolean))].sort();
+    catSel.innerHTML = `<option value="">all categories</option>` +
+      catsForDim.map((c) => `<option${c === prevCat ? " selected" : ""}>${esc(c)}</option>`).join("");
+    if (prevCat && !catsForDim.includes(prevCat)) catSel.value = "";
+    const category = lblCat();
     const textOf = LB().textIndex(state.rawResponses);
     const cov = LB().validatedDims().map((d) => [d, LB().coverage(scored, state.humanLabels, d, textOf)]);
     const blocked = cov.reduce((s, [, c]) => s + c.missingText, 0);
@@ -246,31 +258,35 @@
       (blocked ? `<div class="msg err">${blocked} judge-scored row(s) have no response text, so they cannot be labeled.
         Either the responses came back empty, or this data was loaded without <code>rawResponses</code> (the shipped
         sample is scores-only — run Generate, or import a full export).</div>` : "");
-    const c = LB().coverage(scored, state.humanLabels, lblDim(), textOf);
-    $("#lblCoverage").textContent = `· ${lblDim()}: ${c.labeled} labeled of ${c.eligible} labelable` +
+    const c = LB().coverage(scored, state.humanLabels, lblDim(), textOf, category);
+    $("#lblCoverage").textContent = `· ${lblDim()}${category ? " / " + category : ""}: ${c.labeled} labeled of ${c.eligible} labelable` +
       (c.missingText ? ` · ${c.missingText} unlabelable (no text)` : "");
     const nl = state.humanLabels.filter((h) => h.human_score !== null && h.human_score !== "").length;
     $("#lblFileCount").textContent = nl
       ? `· ${state.labeledResponses.length} response(s) pinned · ${nl} label(s)` : "";
   }
   $("#lblDim").onchange = renderLabel;
+  $("#lblCatFilter").onchange = renderLabel;
 
   function labelTasks() {
     const target = +$("#lblTarget").value || 100;
     const textOf = LB().textIndex(state.rawResponses);
-    const c = LB().coverage(state.scored || [], state.humanLabels, lblDim(), textOf);
+    const category = lblCat();
+    const c = LB().coverage(state.scored || [], state.humanLabels, lblDim(), textOf, category);
     const need = Math.max(0, target - c.labeled);
     return LB().buildTasks(state.scored || [], state.rawResponses || [], state.humanLabels, lblDim(),
-      { n: need, seed: +$("#lblSeed").value || 0, textOf });
+      { n: need, seed: +$("#lblSeed").value || 0, textOf, category });
   }
 
   // Empty pool means either "done" or "no response text loaded" — these look identical from the
   // task list but mean opposite things, so separate them before reporting.
   function emptyPoolReason() {
-    const c = LB().coverage(state.scored || [], state.humanLabels, lblDim(), LB().textIndex(state.rawResponses));
+    const category = lblCat();
+    const label = lblDim() + (category ? " / " + category : "");
+    const c = LB().coverage(state.scored || [], state.humanLabels, lblDim(), LB().textIndex(state.rawResponses), category);
     if (c.missingText)
-      return { className: "msg err", text: `Nothing labelable left for ${lblDim()}: ${c.labeled} of ${c.eligible} labelable rows are done, but ${c.missingText} judge-scored row(s) have no response text and cannot be labeled. Run Generate, or import an export that includes rawResponses.` };
-    return { className: "msg ok", text: `${lblDim()} is already at target — nothing left to label.` };
+      return { className: "msg err", text: `Nothing labelable left for ${label}: ${c.labeled} of ${c.eligible} labelable rows are done, but ${c.missingText} judge-scored row(s) have no response text and cannot be labeled. Run Generate, or import an export that includes rawResponses.` };
+    return { className: "msg ok", text: `${label} is already at target — nothing left to label.` };
   }
 
   $("#lblStart").onclick = () => {
@@ -359,7 +375,8 @@
     const m = $("#lblMsg");
     if (!tasks.length) { const r = emptyPoolReason(); m.className = r.className; m.textContent = r.text; return; }
     m.textContent = ""; m.className = "msg";
-    U.download(`worksheet_${lblDim()}.csv`, LB().worksheetCSV(tasks), "text/csv");
+    const cat = lblCat();
+    U.download(`worksheet_${lblDim()}${cat ? "_" + cat : ""}.csv`, LB().worksheetCSV(tasks), "text/csv");
   };
   $("#lblImport").onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
