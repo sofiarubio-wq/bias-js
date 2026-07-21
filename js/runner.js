@@ -57,7 +57,7 @@
       result[t.rid] = row;
       onProgress({ phase: "gen", done: ++done, total: tasks.length, row });
       return null;
-    }, C().MAX_CONCURRENCY);
+    }, C().MAX_CONCURRENCY, opts.signal);
 
     const rows = Object.values(result);
     const summary = {};

@@ -49,11 +49,14 @@
 
   // Bounded-concurrency map: run `worker(item, i)` over items, at most `limit` at once.
   // Preserves result order. onDone(i) fires as each finishes (for progress).
-  U.runPool = async function (items, worker, limit, onDone) {
+  // If `signal` (an AbortSignal) is aborted, lanes stop pulling NEW items — in-flight workers
+  // finish so no request is orphaned or double-charged, and completed results are kept.
+  U.runPool = async function (items, worker, limit, signal, onDone) {
     const results = new Array(items.length);
     let next = 0;
     async function lane() {
       while (true) {
+        if (signal && signal.aborted) return;
         const i = next++;
         if (i >= items.length) return;
         results[i] = await worker(items[i], i);

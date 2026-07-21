@@ -128,7 +128,7 @@
   }
   function renderHistory() {
     const h = state.runHistory;
-    $("#runHistory").innerHTML = h.length ? `<div class="table-wrap"><table><thead><tr><th>started</th><th>stages</th><th>time</th><th>tokens</th><th>calls</th><th>credits</th></tr></thead><tbody>${h.map((r) => `<tr><td>${esc(r.started)}${r.failed ? ` <span class="pill pill-bad">failed</span>` : ""}</td><td>${esc((r.stages || []).join(", "))}</td><td>${r.seconds}s</td><td>${nfmt(r.total_tokens)}</td><td>${r.calls}</td><td>${credits(r.cost)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No runs yet.</p>`;
+    $("#runHistory").innerHTML = h.length ? `<div class="table-wrap"><table><thead><tr><th>started</th><th>stages</th><th>time</th><th>tokens</th><th>calls</th><th>credits</th></tr></thead><tbody>${h.map((r) => `<tr><td>${esc(r.started)}${r.failed ? ` <span class="pill pill-bad">failed</span>` : ""}${r.halted ? ` <span class="pill pill-warn">halted</span>` : ""}</td><td>${esc((r.stages || []).join(", "))}</td><td>${r.seconds}s</td><td>${nfmt(r.total_tokens)}</td><td>${r.calls}</td><td>${credits(r.cost)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No runs yet.</p>`;
   }
   // History outlives the tab, so it is written on every run rather than only at export.
   async function addHistory(entry) {
@@ -140,36 +140,55 @@
   $("#clearHistory").onclick = async () => {
     state.runHistory = []; await St.set("runHistory", state.runHistory); renderHistory();
   };
+  // Cooperative halt: Stop aborts the shared signal; the run loop stops launching new work after
+  // the current stage's in-flight calls settle, then saves whatever completed.
+  let RUN_ABORT = null;
+  $("#stopBtn").onclick = () => {
+    if (!RUN_ABORT || RUN_ABORT.signal.aborted) return;
+    RUN_ABORT.abort();
+    $("#stopBtn").disabled = true;
+    $("#runStatus").textContent = "stopping… (finishing in-flight calls)";
+    log("### STOP requested — halting after in-flight calls settle ###");
+  };
   $("#runBtn").onclick = async () => {
     const stages = ["generate", "score", "analyze"].filter((s) => $("#st" + s[0].toUpperCase() + s.slice(1)).checked);
     if (!stages.length) { $("#runStatus").textContent = "select a stage"; return; }
-    $("#runBtn").disabled = true; $("#runStatus").textContent = "running…";
+    RUN_ABORT = new AbortController();
+    const signal = RUN_ABORT.signal;
+    $("#runBtn").disabled = true; $("#stopBtn").disabled = false; $("#runStatus").textContent = "running…";
     BIAS.models.METER.reset(); runStart = performance.now();
     STATUS_TIMER = setInterval(liveStats, 500);
     try {
       if (stages.includes("generate")) {
         log("### GENERATE ###");
         const cache = Object.fromEntries((state.rawResponses || []).map((r) => [r.response_id, r]));
-        const { rows, summary } = await BIAS.runner.generate(state.prompts, { cache, fresh: $("#optFresh").checked,
+        const { rows, summary } = await BIAS.runner.generate(state.prompts, { cache, fresh: $("#optFresh").checked, signal,
           onProgress: (p) => { if (p.phase === "plan") log(`${p.total} total · ${p.cached} cached · ${p.todo} to generate`); else if (p.phase === "gen" && p.done % 20 === 0) log(`  ...${p.done}/${p.total} generated`); } });
         state.rawResponses = rows; await St.set("rawResponses", rows);
         for (const [mdl, s] of Object.entries(summary)) log(`  ${mdl}: ok=${s.ok} err=${s.err} tokens=${nfmt(s.tokens)}`);
       }
-      if (stages.includes("score")) {
+      if (!signal.aborted && stages.includes("score")) {
         log("### SCORE ###");
         if (state.labeledResponses.length) log(`  folding in ${state.labeledResponses.length} pinned labeled response(s)`);
         const { scored, judgeCache } = await BIAS.scorers.scoreResponses(state.rawResponses, { judgeCache: state.judgeCache,
-          pinned: state.labeledResponses,
+          pinned: state.labeledResponses, signal,
           onProgress: (p) => { if (p.done % 20 === 0) log(`  ...judged ${p.done}/${p.total}`); } });
         state.scored = scored; state.judgeCache = judgeCache;
         await St.set("scored", scored); await St.set("judgeCache", judgeCache);
         log(`  scored ${scored.length} rows`);
       }
-      if (stages.includes("analyze")) { log("### ANALYZE ###"); renderResults(); renderOutputs(); log("  results updated"); }
+      if (!signal.aborted && stages.includes("analyze")) { log("### ANALYZE ###"); renderResults(); renderOutputs(); log("  results updated"); }
       const m = BIAS.models.METER.snapshot(), sec = +((performance.now() - runStart) / 1000).toFixed(1);
-      log(`### run: ${sec}s · ${nfmt(m.total_tokens)} tokens · ${m.calls} calls · credits ${credits(m.cost)} ###`);
-      await addHistory({ started: new Date().toLocaleString(), stages, seconds: sec, ...m });
-      $("#runStatus").textContent = "done";
+      if (signal.aborted) {
+        renderResults(); renderOutputs();   // surface whatever partial work completed
+        log(`### HALTED by user · ${sec}s · ${nfmt(m.total_tokens)} tokens · ${m.calls} calls · credits ${credits(m.cost)} — partial results saved ###`);
+        await addHistory({ started: new Date().toLocaleString(), stages, halted: true, seconds: sec, ...m });
+        $("#runStatus").textContent = "halted";
+      } else {
+        log(`### run: ${sec}s · ${nfmt(m.total_tokens)} tokens · ${m.calls} calls · credits ${credits(m.cost)} ###`);
+        await addHistory({ started: new Date().toLocaleString(), stages, seconds: sec, ...m });
+        $("#runStatus").textContent = "done";
+      }
     } catch (e) {
       log("### ERROR: " + (e.message || e) + " ###"); $("#runStatus").textContent = "error";
       // a failed run is the one you most want a record of — keep it, marked
@@ -177,7 +196,7 @@
       await addHistory({ started: new Date().toLocaleString(), stages, failed: true,
         seconds: +((performance.now() - runStart) / 1000).toFixed(1), ...m });
     }
-    finally { clearInterval(STATUS_TIMER); STATUS_TIMER = null; liveStats(); $("#runBtn").disabled = false; }
+    finally { clearInterval(STATUS_TIMER); STATUS_TIMER = null; liveStats(); $("#runBtn").disabled = false; $("#stopBtn").disabled = true; RUN_ABORT = null; }
   };
 
   /* ---- outputs ---- */
