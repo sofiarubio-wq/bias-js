@@ -25,10 +25,12 @@
     };
   })();
 
-  M.callOpenRouter = async function ({ model, messages, response_format }) {
+  M.callOpenRouter = async function ({ model, messages, response_format, temperature, seed }) {
     const key = BIAS.getApiKey ? BIAS.getApiKey() : "";
     if (!key) throw Object.assign(new Error("No OpenRouter API key set (Settings tab)."), { fatal: true });
-    const body = { model, max_tokens: C().MAX_TOKENS, temperature: C().TEMPERATURE, messages, usage: { include: true } };
+    // temperature/seed default to the generation settings; the judge overrides them for determinism.
+    const body = { model, max_tokens: C().MAX_TOKENS, temperature: temperature ?? C().TEMPERATURE, messages, usage: { include: true } };
+    if (seed != null) body.seed = seed;   // honored by providers that support it; ignored otherwise
     if (response_format) body.response_format = response_format;
 
     let lastErr;

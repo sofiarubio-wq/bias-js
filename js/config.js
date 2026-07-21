@@ -14,6 +14,10 @@
 
     RUNS_PER_PROMPT: 8,
     TEMPERATURE: 0.7,
+    // Judge scoring is held deterministic (temp 0 + fixed seed) so grades reproduce across runs,
+    // independent of the generation temperature above. See js/scorers.js llmJudge.
+    JUDGE_TEMPERATURE: 0,
+    JUDGE_SEED: 7,
     MAX_TOKENS: 600,
     MAX_CONCURRENCY: 8,
     MAX_RETRIES: 4,
