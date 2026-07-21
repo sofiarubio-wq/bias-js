@@ -309,6 +309,12 @@
     const t = session.tasks[session.i];
     $("#lblProgress").textContent = `${session.i + 1} / ${session.tasks.length} · ${session.added.length} labeled`;
     $("#lblModel").textContent = t.model; $("#lblId").textContent = t.response_id; $("#lblCat").textContent = t.category;
+    // Paired dimensions (D1) need both responses shown so the labeler can compare; otherwise a
+    // single response pane, as before.
+    const paired = !!t.pair_text;
+    $("#lblTextHdr").hidden = !paired; $("#lblTextHdr").textContent = paired ? "Response A" : "";
+    $("#lblPairHdr").hidden = !paired; $("#lblPairHdr").textContent = paired ? "Response B" : "";
+    $("#lblPairText").hidden = !paired; $("#lblPairText").textContent = paired ? (t.pair_text || "(empty)") : "";
     $("#lblText").textContent = t.response_text || "(empty)";
     $("#lblSession").scrollIntoView({ block: "nearest" });
   }
