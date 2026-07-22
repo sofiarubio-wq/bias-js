@@ -424,8 +424,8 @@
   }
   /* ---- scored data (ported from bias/dashboard.py) ---- */
   // Stackable per-column filters, AND-combined, shown as removable chips.
-  const SCORED_LIMIT = 1000;         // matches dashboard.py's max_rows
-  let scFilters = [], scCols = [];
+  const SCORED_PAGE = 1000;          // rows per page (was dashboard.py's max_rows cap)
+  let scFilters = [], scCols = [], scAll = [], scPage = 0;
 
   // Rows are built per-category, so each carries only its own dimensions and the key union is
   // ragged. Order by config so the columns stay stable run to run, then append anything unexpected.
@@ -440,42 +440,55 @@
   }
 
   function renderScored(scored) {
-    scCols = scoredColumns(scored);
-    const shown = scored.slice(0, SCORED_LIMIT);
-    $("#scored").innerHTML = shown.length
-      ? table(scCols, shown) + (scored.length > shown.length
-        ? `<p class="muted">showing first ${shown.length} of ${scored.length}</p>` : "")
-      : `<p class="muted">No scored data — run Score.</p>`;
+    scAll = scored || [];
+    scCols = scoredColumns(scAll);
+    scPage = 0;
     $("#scCol").innerHTML = `<option value="*">any column</option>` +
       scCols.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
-    applyScFilters();
+    renderScPage();
   }
 
-  function applyScFilters() {
-    const rows = $$("#scored table tbody tr");
-    let shown = 0;
-    rows.forEach((tr) => {
-      const ok = scFilters.every((f) => {
-        const v = f.val.toLowerCase();
-        if (f.col === "*") return tr.textContent.toLowerCase().includes(v);
-        const i = scCols.indexOf(f.col);
-        if (i < 0) return true;
-        const c = tr.children[i];
-        return c && c.textContent.toLowerCase().includes(v);
-      });
-      tr.style.display = ok ? "" : "none";
-      if (ok) shown++;
-    });
-    let n = $("#scored .nomatch");
-    if (rows.length && shown === 0) {
-      if (!n) { n = document.createElement("div"); n.className = "nomatch"; $("#scored").appendChild(n); }
-      n.textContent = "no rows match the filters";
-    } else if (n) n.remove();
+  // Filters run against the data (all rows), not the rendered DOM, so they span every page.
+  function scFilteredRows() {
+    if (!scFilters.length) return scAll;
+    return scAll.filter((r) => scFilters.every((f) => {
+      const v = f.val.toLowerCase();
+      if (f.col === "*") return scCols.some((c) => cell(r[c]).toLowerCase().includes(v));
+      return cell(r[f.col]).toLowerCase().includes(v);
+    }));
+  }
+
+  function renderScChips() {
     $("#scFilters").innerHTML = scFilters.map((f, i) =>
       `<span class="fchip">${f.col === "*" ? "any" : esc(f.col)} ⊇ "${esc(f.val)}"<button class="fx" data-i="${i}" title="remove">✕</button></span>`).join("");
-    $$("#scFilters .fx").forEach((b) => (b.onclick = () => { scFilters.splice(+b.dataset.i, 1); applyScFilters(); }));
-    $("#scCount").textContent = !rows.length ? ""
-      : scFilters.length ? `· ${shown} of ${rows.length} shown` : `· ${rows.length} rows`;
+    $$("#scFilters .fx").forEach((b) => (b.onclick = () => { scFilters.splice(+b.dataset.i, 1); scPage = 0; renderScPage(); }));
+  }
+
+  function renderScPage() {
+    const filtered = scFilteredRows();
+    const pages = Math.max(1, Math.ceil(filtered.length / SCORED_PAGE));
+    scPage = Math.min(Math.max(0, scPage), pages - 1);
+    const start = scPage * SCORED_PAGE;
+    const pageRows = filtered.slice(start, start + SCORED_PAGE);
+    $("#scored").innerHTML = pageRows.length ? table(scCols, pageRows)
+      : (scAll.length ? `<p class="muted">no rows match the filters</p>` : `<p class="muted">No scored data — run Score.</p>`);
+
+    // Prev/Next pager — only when the filtered set spans more than one page.
+    const pg = $("#scPager");
+    if (filtered.length > SCORED_PAGE) {
+      pg.innerHTML =
+        `<button id="scPrev" class="btn btn-sm"${scPage <= 0 ? " disabled" : ""}>‹ Prev</button>` +
+        `<span class="muted">rows ${start + 1}–${start + pageRows.length} of ${filtered.length} · page ${scPage + 1} / ${pages}</span>` +
+        `<button id="scNext" class="btn btn-sm"${scPage >= pages - 1 ? " disabled" : ""}>Next ›</button>`;
+      const go = (d) => { scPage += d; renderScPage(); $("#scored").scrollIntoView({ block: "nearest" }); };
+      $("#scPrev").onclick = () => scPage > 0 && go(-1);
+      $("#scNext").onclick = () => scPage < pages - 1 && go(1);
+    } else pg.innerHTML = "";
+
+    renderScChips();
+    const total = scAll.length;
+    $("#scCount").textContent = !total ? ""
+      : scFilters.length ? `· ${filtered.length} of ${total} match` : `· ${total} rows`;
   }
 
   function addScFilter() {
@@ -483,11 +496,11 @@
     if (!val) return;
     scFilters.push({ col: $("#scCol").value, val });
     $("#scVal").value = ""; $("#scVal").focus();
-    applyScFilters();
+    scPage = 0; renderScPage();
   }
   $("#scAdd").onclick = addScFilter;
   $("#scVal").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addScFilter(); } });
-  $("#scClear").onclick = () => { scFilters = []; applyScFilters(); };
+  $("#scClear").onclick = () => { scFilters = []; scPage = 0; renderScPage(); };
 
   $("#refreshResults").onclick = renderResults;
   $("#tgGrades").onclick = () => { const p = $("#gradesReport"), b = $("#tgGrades"); if (!p.classList.contains("hidden")) { p.classList.add("hidden"); b.textContent = "show"; return; } p.textContent = window.__gradeMd || "(run Analyze)"; p.classList.remove("hidden"); b.textContent = "hide"; };
